@@ -1,0 +1,45 @@
+[project]
+name = "kuhnya-kadri"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "opencv-python>=4.13.0.90",
+    "pillow>=12.1.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "pymongo>=4.16.0",
+    "vk-api>=11.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.37.2",
+    "faker>=40.1.2",
+    "pytest>=9.0.2",
+    "structlog>=25.5.0",
+]
+
+[project.scripts]
+start = "src.main:main"
+
+[tool.basedpyright]
+include = ["src"]
+exclude = ["**/__pycache__"]
+
+typeCheckingMode = "recommended"
+reportAny = "none"
+reportExplicitAny = "none"
+reportIgnoreCommentWithoutRule = false
+reportUnannotatedClassAttribute = false
+reportMissingSuperCall = false
+reportMissingTypeStubs = false
+reportUnknownVariableType = false
