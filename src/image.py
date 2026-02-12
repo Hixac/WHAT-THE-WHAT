@@ -1,61 +1,44 @@
 from pathlib import Path
-
 import structlog
-from PIL import Image, ImageDraw, ImageFont
 
 from src.core.config import settings
+from PIL import Image, ImageDraw, ImageFont
 
 
 LOGGER = structlog.get_logger(__file__)
 
 
-# I didn't write a shit here
 class ImageTextComposer:
-    """Compose multi-line text onto an image's bottom strip with optimal font size."""
 
-    # Constants
-    BOTTOM_STRIP_HEIGHT = 100
-    MIN_FONT_SIZE = 1
-    MAX_FONT_SIZE = 200
+    VERTICAL_PADDING = 1
+    MAX_ALLOWED_LINES = 5
+    MIN_FONT_SIZE = 10
+    MAX_FONT_SIZE = 50
 
-    def __init__(self, *, font_path: Path) -> None:
-        """
-        Initialize the composer with the path to the TrueType font file.
-
-        Args:
-            font_path: Path to the .ttf font file.
-        """
-        self.font_path = font_path
+    def __init__(self, font_path: str | Path = settings.IMPACT_FONT_PATH) -> None:
+        self.font_path = Path(font_path)
         self.base_image: Image.Image | None = None
         self.canvas: Image.Image | None = None
 
-    def load_base_image(self, image_path: Path) -> None:
-        """
-        Load the base image from the given path. Exit if not found.
+    def load_base_image(self, image_path: str | Path) -> None:
+        path = Path(image_path)
+        if not path.exists():
+            LOGGER.error(f"Path doesn't exist", path=path)
+            return
+        self.base_image = Image.open(path)
 
-        Args:
-            image_path: Path to the input image file.
-        """
-        try:
-            self.base_image = Image.open(image_path)
-        except FileNotFoundError:
-            print(f"Error: {image_path} not found. Please check file path.")
-            exit(1)
-
-    def _create_canvas(self) -> None:
-        """Create a new canvas with extra bottom strip and paste the base image on top."""
+    def _create_canvas(self, bottom_height: int) -> None:
         if self.base_image is None:
-            raise ValueError("Base image not loaded. Call load_base_image() first.")
-
+            LOGGER.error("Base image not loaded. Call load_base_image() first")
+            raise ValueError("Base image not loaded. Call load_base_image() first")
         self.canvas = Image.new(
             "RGB",
-            (self.base_image.width, self.base_image.height + self.BOTTOM_STRIP_HEIGHT)
+            (self.base_image.width, self.base_image.height + bottom_height)
         )
         self.canvas.paste(self.base_image)
 
     @staticmethod
     def _line_height(font: ImageFont.FreeTypeFont) -> int:
-        """Calculate total line height (ascent + descent) for a given font."""
         ascent, descent = font.getmetrics()
         return ascent + descent
 
@@ -67,14 +50,6 @@ class ImageTextComposer:
     ) -> list[str]:
         """
         Wrap text to fit within max_width. Break words character by character if necessary.
-
-        Args:
-            text: Input text.
-            font: Loaded font object.
-            max_width: Maximum allowed width in pixels.
-
-        Returns:
-            List of wrapped lines.
         """
         words = text.split()
         lines = []
@@ -83,8 +58,7 @@ class ImageTextComposer:
 
         for word in words:
             word_width = font.getlength(word)
-
-            # If word itself exceeds max_width, break it character by character
+            # Break long word character by character
             if word_width > max_width:
                 for char in word:
                     char_width = font.getlength(char)
@@ -110,25 +84,17 @@ class ImageTextComposer:
 
         if current_line:
             lines.append("".join(current_line))
-
         return lines
 
-    def _calculate_optimal_font(
+    def _optimal_font_for_lines(
         self,
         text: str,
         max_width: int,
-        max_height: int
+        max_allowed_lines: int
     ) -> tuple[ImageFont.FreeTypeFont, list[str]]:
         """
-        Binary search for the largest font size that fits the text in the given area.
-
-        Args:
-            text: Text to be rendered.
-            max_width: Maximum width in pixels.
-            max_height: Maximum height in pixels.
-
-        Returns:
-            A tuple containing the optimal font object and the list of wrapped lines.
+        Binary search for the largest font size that fits the text within the
+        maximum allowed number of lines.
         """
         best_font = None
         best_lines = []
@@ -137,32 +103,22 @@ class ImageTextComposer:
         while low <= high:
             mid = (low + high) // 2
             try:
-                font = ImageFont.truetype(self.font_path, mid)
+                font = ImageFont.truetype(str(self.font_path), mid)
             except OSError:
                 high = mid - 1
                 continue
 
-            lh = self._line_height(font)
-            if lh <= 0:
-                high = mid - 1
-                continue
-
-            max_lines = max_height // lh
-            if max_lines == 0:
-                high = mid - 1
-                continue
-
             lines = self._wrap_text_to_width(text, font, max_width)
-            if len(lines) <= max_lines:
+            if len(lines) <= max_allowed_lines:
                 best_font = font
                 best_lines = lines
                 low = mid + 1
             else:
                 high = mid - 1
 
-        # Fallback to minimal font if nothing fitted
+        # Fallback to minimal font if nothing fits
         if best_font is None:
-            best_font = ImageFont.truetype(self.font_path, self.MIN_FONT_SIZE)
+            best_font = ImageFont.truetype(str(self.font_path), self.MIN_FONT_SIZE)
             best_lines = self._wrap_text_to_width(text, best_font, max_width)
 
         return best_font, best_lines
@@ -174,54 +130,53 @@ class ImageTextComposer:
         font: ImageFont.FreeTypeFont,
         start_y: int
     ) -> None:
-        """
-        Draw each line of text starting at start_y with proper line spacing.
-
-        Args:
-            draw: ImageDraw object.
-            lines: List of text lines.
-            font: Font to use.
-            start_y: Y-coordinate for the first line.
-        """
+        """Draw each line of text starting at start_y with proper line spacing."""
         y = start_y
         lh = ImageTextComposer._line_height(font)
         for line in lines:
             draw.text((0, y), line, font=font, fill="white")
             y += lh
 
-    def compose(self, *, text: str, input_path: Path, output_path: Path) -> None:
-        """
-        Full composition pipeline: load image, add text, save result.
-
-        Args:
-            input_path: Path to the input image file.
-            output_path: Path where the output image will be saved.
-        """
-        # Load base image
+    def compose(
+        self,
+        *,
+        text: str,
+        input_path: str | Path,
+        output_path: str | Path
+    ) -> None:
         self.load_base_image(input_path)
 
-        # Create canvas with bottom strip
-        self._create_canvas()
+        if self.base_image is None:
+            raise Exception("Base image is None")
 
-        # Define text area dimensions
         max_width = self.base_image.width
-        max_height = self.BOTTOM_STRIP_HEIGHT
-
-        # Compute optimal font and wrapped lines
-        font, lines = self._calculate_optimal_font(
+        font, lines = self._optimal_font_for_lines(
             text,
             max_width,
-            max_height
+            self.MAX_ALLOWED_LINES
         )
 
-        if self.canvas is None or self.base_image is None:
-            LOGGER.error("Canvas or BaseImage is None for some funny reason")
-            raise Exception("Canvas or BaseImage is None for some funny reason")
+        line_height = self._line_height(font)
+        strip_height = len(lines) * line_height + 2 * self.VERTICAL_PADDING
+        self._create_canvas(strip_height)
 
-        # Draw text onto the bottom strip
+        if self.canvas is None:
+            raise Exception("Canvas is None")
+
         draw = ImageDraw.Draw(self.canvas)
-        self._draw_text_lines(draw, lines, font, self.base_image.height)
+        text_y = self.base_image.height + self.VERTICAL_PADDING
+        self._draw_text_lines(draw, lines, font, text_y)
 
-        # Save result
-        self.canvas.save(output_path)
-        LOGGER.info("Image saved successfully", path=output_path)
+        output_path = Path(output_path)
+        self.canvas.save(str(output_path))
+        LOGGER.info("Image with text saved", output_path=output_path)
+
+
+def main():
+    """For testing shiiet"""
+    composer = ImageTextComposer(font_path=settings.IMPACT_FONT_PATH)
+    composer.compose(text="Hello world", input_path=settings.FRAME_OUTPUT_PATH, output_path="output_image.jpg")
+
+
+if __name__ == '__main__':
+    main()
