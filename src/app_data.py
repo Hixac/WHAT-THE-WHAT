@@ -17,7 +17,7 @@ class AppData:
         if doc is None:
             doc = {
                 "app_name": settings.APP_NAME,
-                "frame_index": 5115,
+                "frame_index": settings.INITIAL_FRAME + 1,
                 "datetime": datetime.now()
             }
             _ = self.app_data.insert_one(doc)  # pyright: ignore[reportUnknownMemberType]
