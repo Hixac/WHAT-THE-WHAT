@@ -1,11 +1,12 @@
 import uuid
+import requests
 from time import time
-from requests import request
 from urllib.parse import urlencode
 
 import structlog
 
 from src.core.config import settings
+from src.core.exceptions import RecognitionError
 
 
 LOGGER = structlog.get_logger(__file__)
@@ -18,10 +19,9 @@ class TokenManager:
 
     def get_token(self) -> str:
         if self.token is None or self.token_expire is None \
-                or self.token_expire > time():
+                or self.token_expire <= time():
             self.token, self.token_expire = self._refresh_token()
 
-        LOGGER.info("Token gathered successfully")
         return self.token
 
     def _refresh_token(self) -> tuple[str, int]:
@@ -41,7 +41,7 @@ class TokenManager:
             "scope": scope
         })
 
-        response = request("POST", url, verify=False, headers=headers, data=data)
+        response = requests.post(url, verify=False, headers=headers, data=data)
         if response.status_code != 200:
             LOGGER.error("Request to sberbank went wrong!", url=url, headers=headers, data=data)
             raise Exception("Request to sberbank went wrong!")
@@ -50,29 +50,27 @@ class TokenManager:
         return json["access_token"], int(json["expires_at"])
 
 
-class SpeechSalute:
-    token_manager = TokenManager()
+_token_manager = TokenManager()
 
-    @classmethod
-    def get_speech(cls, *, ogg_data: bytes) -> list[str]:
-        token = cls.token_manager.get_token()
+def get_speech(*, ogg_data: bytes) -> list[str]:
+    token = _token_manager.get_token()
 
-        url = "https://smartspeech.sber.ru/rest/v1/speech:recognize"
+    url = "https://smartspeech.sber.ru/rest/v1/speech:recognize"
 
-        params = {
-            "enable_profanity_filter": False
-        }
-        headers = {
-            "Content-Type": "audio/ogg;codecs=opus",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}"
-        }
+    params = {
+        "enable_profanity_filter": False
+    }
+    headers = {
+        "Content-Type": "audio/ogg;codecs=opus",
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
 
-        response = request(
-            "POST", url, verify=False, params=params, headers=headers, data=ogg_data
-        )
-        if response.status_code != 200:
-            LOGGER.error("Salute speech went wrong!", url=url, params=params, headers=headers, data=ogg_data)
-            raise Exception("Salute speech went wrong!")
+    response = requests.post(
+        url, verify=False, params=params, headers=headers, data=ogg_data
+    )
+    if response.status_code != 200:
+        LOGGER.error("Salute speech went wrong!", url=url, params=params, data=ogg_data)
+        raise RecognitionError(url, params, "Salute speech went wrong!")
 
-        return response.json()["result"]
+    return response.json()["result"]

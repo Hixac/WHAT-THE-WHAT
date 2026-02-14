@@ -11,7 +11,7 @@ import ffmpeg
 
 from cv2.typing import MatLike
 
-from src.speech_recognition import SpeechSalute
+from src.speech_recognition import get_speech
 from src.core.config import settings
 
 
@@ -111,4 +111,4 @@ def get_speech_from_video(*, prev_frame: int, newest_frame: int, fps: int) -> st
     except ffmpeg.Error:
         LOGGER.exception("Ffmpeg went wrong")
     else:
-        return "".join(SpeechSalute.get_speech(ogg_data=out))  # pyright: ignore
+        return "".join(get_speech(ogg_data=out))  # pyright: ignore

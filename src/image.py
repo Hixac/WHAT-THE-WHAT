@@ -13,7 +13,7 @@ class ImageTextComposer:
     VERTICAL_PADDING = 1
     MAX_ALLOWED_LINES = 5
     MIN_FONT_SIZE = 10
-    MAX_FONT_SIZE = 50
+    MAX_FONT_SIZE = 20
 
     def __init__(self, font_path: str | Path = settings.IMPACT_FONT_PATH) -> None:
         self.font_path = Path(font_path)

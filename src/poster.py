@@ -74,7 +74,7 @@ def posting():
 
         try:
             do_post(frame_count, path=path)
-        except:
+        except Exception:
             LOGGER.exception("Stupid ass vk")
             continue
         app_data.increment_frame_index()
