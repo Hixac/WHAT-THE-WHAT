@@ -2,6 +2,7 @@ import structlog
 from vk_api import VkApi, VkUpload
 
 from src.core.config import settings
+from src.core.exceptions import VkConnectionError
 
 
 LOGGER = structlog.get_logger(__name__)
@@ -18,21 +19,27 @@ def _get_session() -> VkApi:
 
 
 def wall_post(*, msg: str, attachments: str) -> None:
-    _get_session().method(  # pyright: ignore[reportUnknownMemberType]
-        "wall.post",
-        {"owner_id": settings.VK_GROUP_ID, "message": msg, "attachments": attachments}
-    )
+    try:
+        _get_session().method(  # pyright: ignore[reportUnknownMemberType]
+            "wall.post",
+            {"owner_id": settings.VK_GROUP_ID, "message": msg, "attachments": attachments}
+        )
+    except Exception as e:
+        raise VkConnectionError("Connection pool error") from e
 
 
 def upload_photo(direc: str) -> list[str]:
-    upload = VkUpload(_get_session())
-    temp = upload.photo_wall(  # pyright: ignore[reportUnknownMemberType]
-        direc,
-        group_id=-settings.VK_GROUP_ID
-    )
+    try:
+        upload = VkUpload(_get_session())
+        temp = upload.photo_wall(  # pyright: ignore[reportUnknownMemberType]
+            direc,
+            group_id=-settings.VK_GROUP_ID
+        )
 
-    ret: list[str] = []
-    for photo in temp:
-        ret.append("photo" + str(photo["owner_id"]) + "_" + str(photo["id"]))
+        ret: list[str] = []
+        for photo in temp:
+            ret.append("photo" + str(photo["owner_id"]) + "_" + str(photo["id"]))
 
-    return ret
+        return ret
+    except Exception as e:
+        raise VkConnectionError("Connection pool error") from e

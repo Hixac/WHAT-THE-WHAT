@@ -4,7 +4,7 @@ from pathlib import Path
 
 import structlog
 
-from src.core.config import settings
+from src.core.exceptions import RecognitionError, VkConnectionError
 from src.app_data import app_data
 from src.vk_api_wrapper import upload_photo, wall_post
 from src.video_frame import (
@@ -19,64 +19,105 @@ from src.image import ImageTextComposer
 LOGGER = structlog.get_logger(__name__)
 
 
-def do_sleep():
-    date: datetime = app_data.get()["datetime"]
-    time_diff = (datetime.now() - date).total_seconds()
-    delay = settings.POST_DELAY_IN_SECONDS - time_diff
+class Poster:
+    @property
+    def frame_index(self):
+        return app_data.get()["frame_index"]
 
-    if delay < 0:
-        LOGGER.info("Skip", seconds=delay)
-    else:
-        LOGGER.info("Sleeping", seconds=delay)
-        sleep(delay)
+    def __init__(
+        self,
+        *,
+        video_path: Path,
+        output_path: Path,
+        second_output_path: Path,
+        font_path: Path,
+        delay_in_seconds: int
+    ) -> None:
+        self.video = Video(video_path)
 
+        self.output_path = output_path
+        self.second_output_path = second_output_path
+        self.font_path = font_path
+        self.delay_in_seconds = delay_in_seconds
 
-def do_post(frame_count: int, *, path: Path):
-    attachment = upload_photo(str(path))[0]
-    index: int = app_data.get()["frame_index"]
+        self.minimal_image_difference = 5  # in %
+        self.frame_count: int = self.video.frame_count
+        self.fps: int = self.video.fps
 
-    wall_post(
-        msg=f"{index} из {frame_count} кадров",
-        attachments=attachment
-    )
+    def _sleep(self) -> None:
+        date: datetime = app_data.get()["datetime"]
+        time_diff = (datetime.now() - date).total_seconds()
+        delay = self.delay_in_seconds - time_diff
 
+        if delay < 0:
+            LOGGER.info("Skip", seconds=delay)
+        else:
+            LOGGER.info("Sleeping", seconds=delay)
+            sleep(delay)
 
-def posting():
-    while True:
-        frame_index: int = app_data.get()["frame_index"]
-        path: Path = settings.FRAME_OUTPUT_PATH
+    def _post(self, *, path: Path) -> None:
+        attachment = upload_photo(str(path))[0]
+        index: int = self.frame_index
 
-        frame_count: int
-        fps: int
-        with Video(settings.VIDEO_FILE_PATH) as video:
-            frame_count = video.frame_count
-            fps = video.fps
+        wall_post(
+            msg=f"{index} из {self.frame_count} кадров",
+            attachments=attachment
+        )
 
-            frame = video.get_frame_by_index(frame_index)
+    def _speeched_post(self) -> None:
+        text = get_speech_from_video(
+            prev_frame=self.frame_index-500, 
+            newest_frame=self.frame_index,
+            fps=self.fps
+        )
+        if text is not None:
+            composer = ImageTextComposer(font_path=self.font_path)
+            composer.compose(text=text, input_path=self.output_path, output_path=self.second_output_path)
 
-            if does_file_exist(settings.FRAME_OUTPUT_PATH):
-                newest_frame = video.read_frame(path=settings.FRAME_OUTPUT_PATH)
+    def _push_cached(self, *, path: Path) -> None:
+        LOGGER.info("Pushing cached post")
+        while True:
+            try:
+                self._post(path=path)
+            except:
+                sleep(60)  # minute sleeping and trying again
+            else:
+                LOGGER.info("Successfully pushed")
+                return
+
+    def posting(self):
+        while True:
+            path: Path = self.output_path
+
+            frame = self.video.get_frame_by_index(self.frame_index)
+
+            if does_file_exist(self.output_path):
+                newest_frame = self.video.read_frame(path=self.output_path)
                 image_diff = image_difference(frame, newest_frame)
-                if image_diff > 5:  # IF IMAGES ARE MOSTLY LIKE THE SAME WE SKIP
+                if image_diff > self.minimal_image_difference:  # IF IMAGES ARE MOSTLY LIKE THE SAME WE SKIP
                     LOGGER.info("Images are same")
                     app_data.increment_frame_index()
                     continue
 
-            video.save_frame_into_file(path=settings.FRAME_OUTPUT_PATH, frame=frame)
+            self.video.save_frame_into_file(path=self.output_path, frame=frame)
 
 
-        text = get_speech_from_video(prev_frame=frame_index-500, newest_frame=frame_index, fps=fps)
-        if text is not None:
-            composer = ImageTextComposer(font_path=settings.IMPACT_FONT_PATH)
-            composer.compose(text=text, input_path=settings.FRAME_OUTPUT_PATH, output_path=settings.CHANGED_OUTPUT_PATH)
-            path = settings.CHANGED_OUTPUT_PATH
+            try:
+                self._speeched_post()
+            except RecognitionError:
+                self.minimal_image_difference = 20
+                LOGGER.info("All tokens left I suppose so we post without text")
+            else:
+                self.minimal_image_difference = 5
+                path = self.second_output_path
 
 
-        try:
-            do_post(frame_count, path=path)
-        except Exception:
-            LOGGER.exception("Stupid ass vk")
-            continue
-        app_data.increment_frame_index()
+            try:
+                self._post(path=path)
+            except VkConnectionError:
+                self._push_cached(path=path)
+            finally:
+                app_data.increment_frame_index()
 
-        do_sleep()
+
+            self._sleep()

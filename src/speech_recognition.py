@@ -70,7 +70,7 @@ def get_speech(*, ogg_data: bytes) -> list[str]:
         url, verify=False, params=params, headers=headers, data=ogg_data
     )
     if response.status_code != 200:
-        LOGGER.error("Salute speech went wrong!", url=url, params=params, data=ogg_data)
+        LOGGER.error("Salute speech went wrong!", url=url, params=params)
         raise RecognitionError(url, params, "Salute speech went wrong!")
 
     return response.json()["result"]
